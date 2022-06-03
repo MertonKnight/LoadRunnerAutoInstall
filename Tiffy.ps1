@@ -8,16 +8,29 @@ param
 
 Add-Type -AssemblyName System.Drawing
 
+<#
+.SYNOPSIS
+Merges multiple TIFF file (including multipage TIFFs) into a single mulipage TIFF file.
+
+.DESCRIPTION
+Merges multiple TIFF file (including multipage TIFFs) into a single mulipage TIFF file.
+This function translated from an GNU v3 licensed C# function by Ryadel
+https://www.ryadel.com/en/asp-net-c-sharp-merge-tiff-files-into-single-multipage-tif/
+
+.PARAMETER tiffFiles
+Array of byte arrays of each TIFF file to merge
+
+#>
 function MergeTiff
 {
+    [OutputType([Byte[]])]
     param(
         [Byte[][]]$tiffFiles
     )
-    [System.Byte[]]$tiffMerge
 
-    [System.IO.MemoryStream]$msMerge = New-Object -TypeName System.IO.MemoryStream
-
-    [System.Drawing.Imaging.ImageCodecInfo]$ici
+    [System.Byte[]]$tiffMerge = $null
+    [System.IO.MemoryStream]$msMerge = [System.IO.MemoryStream]::New()
+    [System.Drawing.Imaging.ImageCodecInfo]$ici = $null
 
     foreach($i in [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders())
     {
@@ -30,7 +43,7 @@ function MergeTiff
     [System.Drawing.Imaging.Encoder]$enc = [System.Drawing.Imaging.Encoder]::SaveFlag
     [System.Drawing.Imaging.EncoderParameters]$ep = [System.Drawing.Imaging.EncoderParameters]::New(1)
     
-    [System.Drawing.Bitmap]$pages
+    [System.Drawing.Bitmap]$pages = $null
     $frame = 0
 
     foreach($tiffFile in $tiffFiles)
@@ -41,37 +54,42 @@ function MergeTiff
 
         foreach($guid in $tiffImage.FrameDimensionsList)
         {
+            #Create the frame dimension
             [System.Drawing.Imaging.FrameDimension]$dimension = New-Object -TypeName System.Drawing.Imaging.FrameDimension -ArgumentList $guid
 
+            #Gets the total number of frames in the .tiff file
             $noOfPages = $tiffImage.GetFrameCount($dimension)
 
             for($index = 0;$index -lt $noOfPages; $index++)
             {
                 [System.Drawing.Imaging.FrameDimension] $currentFrame = New-Object -TypeName System.Drawing.Imaging.FrameDimension -ArgumentList $guid
-                $tiffImage.SelectActiveFrame($currentFrame, $index) 
+                $tiffImage.SelectActiveFrame($currentFrame, $index) | Out-Null
 
                 [System.IO.MemoryStream]$tempImg = New-Object -TypeName System.IO.MemoryStream
 
                 $tiffImage.Save($tempImg, [System.Drawing.Imaging.ImageFormat]::Tiff)
-                {
+                
                     if($frame -eq 0)
                     {
-                        $pages = [System.Imaging.Bitmap][System.Drawing.Image]::FromStream($tempImg)
+                        #Save the first frame
+                        $pages = [System.Drawing.Bitmap][System.Drawing.Image]::FromStream($tempImg)
                         $ep.param[0] = [System.Drawing.Imaging.EncoderParameter]::New($enc,[long][System.Drawing.Imaging.EncoderValue]::MultiFrame)
                         $pages.Save($msMerge, $ici, $ep)
                     }
                     else
                     {
+                        #Save the intermediate frames
                         $ep.Param[0] = [System.Drawing.Imaging.EncoderParameter]::New($enc,[long][System.Drawing.Imaging.EncoderValue]::FrameDimensionPage)
-                        $pages.SaveAdd([System.Imaging.Bitmap][System.Drawing.Image]::FromStream($tempImg), $ep)
+                        $pages.SaveAdd([System.Drawing.Bitmap][System.Drawing.Image]::FromStream($tempImg), $ep)
                     }
-                }
-                $frame++
+                
+                $frame = $frame + 1
             }
         }
     }
     if($frame -gt 0)
     {
+        #Flush and close
         $ep.Param[0] = [System.Drawing.Imaging.EncoderParameter]::New($enc, [long][System.Drawing.Imaging.EncoderValue]::Flush)
         $pages.SaveAdd($ep)
     }
@@ -94,6 +112,6 @@ foreach($file in Get-ChildItem -Path $SourceDir -Include '*.TIF' )
     $files.Add([System.IO.File]::ReadAllBytes($file))
 }
 
-$targetFileData = MergeTiff($files.ToArray())
+[System.Byte[]]$targetFileData = MergeTiff($files.ToArray())
 
 [System.IO.File]::WriteAllBytes($DestinationFile, $targetFileData)
